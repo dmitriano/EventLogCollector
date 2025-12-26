@@ -101,9 +101,9 @@ static class Program
         var processed = 0;
         try
         {
-            EventLogCollectorBase collector = options.UseWinApi
-                ? new WinApiEventLogCollector()
-                : new WevtutilEventLogCollector();
+            Collector collector = options.UseWinApi
+                ? new WinapiCollector()
+                : new WevtutilCollector();
 
             Console.ForegroundColor = ConsoleColor.DarkCyan;
             Console.WriteLine($"Collector: {collector.CollectorName}");

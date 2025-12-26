@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-abstract class EventLogCollectorBase
+abstract class Collector
 {
     public virtual string CollectorName => "Base";
 
