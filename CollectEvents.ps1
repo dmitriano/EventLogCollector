@@ -220,13 +220,14 @@ function Show-Help {
     Write-Host "Usage: CollectEvents.ps1 [options]"
     Write-Host ""
     Write-Host "Options:"
-    Write-Host "  --hours <int>            Look back N hours (UTC). Omit for all events."
-    Write-Host "  --logname <string>       Windows log name (default: Security)."
-    Write-Host "  --evtxpath <path>         Path to .evtx file to read."
-    Write-Host "  --eventids <list>         Comma-separated Event IDs."
-    Write-Host "  --progressinterval <int> Print progress every N events (0 = disable)."
-    Write-Host "  --outputfolder <path>     Output folder (default: C:\Logs\Security)."
-    Write-Host "  --usewinapi              Use WinAPI (EvtQuery/EvtNext/EvtRender) instead of wevtutil."
+    Write-Host "  -Hours <int>             Look back N hours (UTC). Omit for all events."
+    Write-Host "  -LogName <string>        Windows log name (default: Security)."
+    Write-Host "  -EvtxPath <path>         Path to .evtx file to read."
+    Write-Host "  -EventIds <int[]>        Event IDs to filter (comma-separated)."
+    Write-Host "  -ProgressInterval <int>  Print progress every N events (0 = disable)."
+    Write-Host "  -OutputFolder <path>     Output folder (default: C:\Logs\Security)."
+    Write-Host "  -UseWinApi               Use WinAPI (EvtQuery/EvtNext/EvtRender) instead of wevtutil."
+    Write-Host "  -Help                    Show this help message."
 }
 
 function Build-XPathQuery {
