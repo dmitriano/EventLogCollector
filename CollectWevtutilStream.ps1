@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
     $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
     if (-not $pwsh) {
-        throw 'CollectWevtutilStream.ps1 requires PowerShell 7+ (pwsh). Install PowerShell 7 or run via dotnet directly.'
+        throw 'CollectWevtutilStream.ps1 requires PowerShell 6+ (pwsh). Install PowerShell 6+ or run via pwsh directly.'
     }
 
     $argumentList = @('-NoProfile', '-File', $MyInvocation.MyCommand.Path) + $Args
@@ -17,21 +17,207 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
     exit $process.ExitCode
 }
 
-$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$projectPath = Join-Path $scriptRoot 'EventLogCollector/EventLogCollector.csproj'
-$configuration = 'Release'
-$targetFramework = 'net9.0'
-$dllPath = Join-Path $scriptRoot "EventLogCollector/bin/$configuration/$targetFramework/EventLogCollector.dll"
+class Options {
+    [Nullable[int]]$Hours
+    [string]$LogName = 'Security'
+    [string]$EvtxPath
+    [System.Collections.Generic.List[int]]$EventIds = [System.Collections.Generic.List[int]]::new()
+    [int]$ProgressInterval = 1000
+    [string]$OutputFolder = 'C:\Logs\Security'
+    [bool]$UseWinApi
+}
 
-if (-not (Test-Path $dllPath)) {
-    Write-Host "Building EventLogCollector ($configuration)..." -ForegroundColor Cyan
-    dotnet build $projectPath -c $configuration | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet build failed with exit code $LASTEXITCODE"
+class EventRecord {
+    [string]$TimeCreated
+    [Nullable[int]]$EventId
+    [string]$ProviderName
+    [string]$Computer
+    [Nullable[long]]$RecordId
+    [System.Collections.Generic.Dictionary[string, string]]$EventData = [System.Collections.Generic.Dictionary[string, string]]::new()
+}
+
+class Collector {
+    [string] get_CollectorName() {
+        return 'Base'
+    }
+
+    [int] Collect(
+        [Options]$options,
+        [string]$xpathQuery,
+        [System.IO.StreamWriter]$writer,
+        $jsonOptions,
+        [System.Diagnostics.Stopwatch]$swRead,
+        [System.Diagnostics.Stopwatch]$swRegex,
+        [System.Diagnostics.Stopwatch]$swParse,
+        [System.Diagnostics.Stopwatch]$swConvert,
+        [System.Diagnostics.Stopwatch]$swWrite) {
+        $writer.WriteLine('[')
+        $writer.Flush()
+
+        $processed = 0
+        $first = $true
+
+        foreach ($xml in $this.ReadEventXml($options, $xpathQuery, $swRead, $swRegex)) {
+            $swParse.Start()
+            $record = Parse-EventToObject -EventXml $xml
+            $swParse.Stop()
+
+            $processed++
+
+            $swConvert.Start()
+            $json = $record | ConvertTo-Json -Compress -Depth 8
+            $swConvert.Stop()
+
+            $swWrite.Start()
+            if ($first) {
+                $first = $false
+            } else {
+                $writer.WriteLine(',')
+            }
+
+            $writer.Write($json)
+
+            if ($options.ProgressInterval -gt 0 -and ($processed % $options.ProgressInterval) -eq 0) {
+                Write-Host "Processed $processed events..." -ForegroundColor DarkGray
+                $writer.Flush()
+            }
+
+            $swWrite.Stop()
+        }
+
+        $writer.WriteLine()
+        $writer.WriteLine(']')
+        $writer.Flush()
+
+        return $processed
+    }
+
+    [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
+        [Options]$options,
+        [string]$xpathQuery,
+        [System.Diagnostics.Stopwatch]$swRead,
+        [System.Diagnostics.Stopwatch]$swRegex) {
+        throw 'ReadEventXml must be implemented by derived classes.'
     }
 }
 
-[System.Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath($dllPath) | Out-Null
+class WevtutilCollector : Collector {
+    hidden static [System.Text.RegularExpressions.Regex]$EventBeginRegex = [System.Text.RegularExpressions.Regex]::new('<Event(\s|>)', [System.Text.RegularExpressions.RegexOptions]::Compiled)
+    hidden static [System.Text.RegularExpressions.Regex]$EventEndRegex = [System.Text.RegularExpressions.Regex]::new('</Event>', [System.Text.RegularExpressions.RegexOptions]::Compiled)
+
+    [string] get_CollectorName() {
+        return 'wevtutil.exe'
+    }
+
+    [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
+        [Options]$options,
+        [string]$xpathQuery,
+        [System.Diagnostics.Stopwatch]$swRead,
+        [System.Diagnostics.Stopwatch]$swRegex) {
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = 'wevtutil.exe'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        if (-not [string]::IsNullOrWhiteSpace($options.EvtxPath)) {
+            $psi.Arguments = "qe `"$($options.EvtxPath)`" /lf:true /q:`"$xpathQuery`" /f:XML"
+        } else {
+            $psi.Arguments = "qe $($options.LogName) /q:`"$xpathQuery`" /f:XML"
+        }
+
+        $proc = [System.Diagnostics.Process]::new()
+        $proc.StartInfo = $psi
+        if (-not $proc.Start()) {
+            throw 'Failed to start wevtutil process.'
+        }
+
+        $buffer = [System.Text.StringBuilder]::new()
+        $inEvent = $false
+
+        while (-not $proc.StandardOutput.EndOfStream) {
+            $swRead.Start()
+            $line = $proc.StandardOutput.ReadLine()
+            $swRead.Stop()
+
+            if ($null -eq $line) {
+                break
+            }
+
+            $swRegex.Start()
+            $matchesBegin = [WevtutilCollector]::EventBeginRegex.IsMatch($line)
+            $swRegex.Stop()
+
+            if (-not $inEvent -and $matchesBegin) {
+                $inEvent = $true
+                $buffer.Clear() | Out-Null
+            }
+
+            if ($inEvent) {
+                $buffer.AppendLine($line) | Out-Null
+
+                $swRegex.Start()
+                $matchesEnd = [WevtutilCollector]::EventEndRegex.IsMatch($line)
+                $swRegex.Stop()
+
+                if ($matchesEnd) {
+                    $inEvent = $false
+                    Write-Output $buffer.ToString()
+                }
+            }
+        }
+
+        $proc.WaitForExit()
+        $stderr = $proc.StandardError.ReadToEnd()
+        if ($proc.ExitCode -ne 0) {
+            throw "wevtutil exit code $($proc.ExitCode). stderr: $stderr"
+        }
+    }
+}
+
+class WinapiCollector : Collector {
+    [string] get_CollectorName() {
+        return 'WinAPI (EventLogReader)'
+    }
+
+    [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
+        [Options]$options,
+        [string]$xpathQuery,
+        [System.Diagnostics.Stopwatch]$swRead,
+        [System.Diagnostics.Stopwatch]$swRegex) {
+        $queryPath = if ([string]::IsNullOrWhiteSpace($options.EvtxPath)) { $options.LogName } else { $options.EvtxPath }
+        $pathType = if ([string]::IsNullOrWhiteSpace($options.EvtxPath)) {
+            [System.Diagnostics.Eventing.Reader.PathType]::LogName
+        } else {
+            [System.Diagnostics.Eventing.Reader.PathType]::FilePath
+        }
+
+        $query = [System.Diagnostics.Eventing.Reader.EventLogQuery]::new($queryPath, $pathType, $xpathQuery)
+        $reader = [System.Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+        try {
+            while ($true) {
+                $swRead.Start()
+                $evt = $reader.ReadEvent()
+                $swRead.Stop()
+                if ($null -eq $evt) {
+                    break
+                }
+
+                try {
+                    $swRead.Start()
+                    $xml = $evt.ToXml()
+                    $swRead.Stop()
+                    Write-Output $xml
+                } finally {
+                    $evt.Dispose()
+                }
+            }
+        } finally {
+            $reader.Dispose()
+        }
+    }
+}
 
 function Show-Help {
     Write-Host "Usage: CollectWevtutilStream.ps1 [options]"
@@ -101,12 +287,87 @@ function Build-XPathQuery {
     return "*"
 }
 
+function Parse-EventToObject {
+    param(
+        [string]$EventXml
+    )
+
+    $settings = [System.Xml.XmlReaderSettings]::new()
+    $settings.ConformanceLevel = [System.Xml.ConformanceLevel]::Fragment
+    $settings.IgnoreWhitespace = $true
+    $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+
+    $stringReader = [System.IO.StringReader]::new($EventXml)
+    $reader = [System.Xml.XmlReader]::Create($stringReader, $settings)
+
+    $timeCreated = $null
+    $eventId = $null
+    $providerName = $null
+    $computer = $null
+    $recordId = $null
+    $eventData = [System.Collections.Generic.Dictionary[string, string]]::new()
+
+    try {
+        while ($reader.Read()) {
+            if ($reader.NodeType -ne [System.Xml.XmlNodeType]::Element) {
+                continue
+            }
+
+            switch ($reader.Name) {
+                'Provider' {
+                    $name = $reader.GetAttribute('Name')
+                    if (-not [string]::IsNullOrEmpty($name)) {
+                        $providerName = $name
+                    }
+                }
+                'EventID' {
+                    $text = $reader.ReadElementContentAsString()
+                    $parsedId = 0
+                    if ([int]::TryParse($text, [ref]$parsedId)) {
+                        $eventId = $parsedId
+                    }
+                }
+                'Computer' {
+                    $computer = $reader.ReadElementContentAsString()
+                }
+                'EventRecordID' {
+                    $text = $reader.ReadElementContentAsString()
+                    $parsedRecordId = 0
+                    if ([long]::TryParse($text, [ref]$parsedRecordId)) {
+                        $recordId = $parsedRecordId
+                    }
+                }
+                'TimeCreated' {
+                    $systemTime = $reader.GetAttribute('SystemTime')
+                    if (-not [string]::IsNullOrWhiteSpace($systemTime)) {
+                        $timeCreated = $systemTime
+                    }
+                }
+                'Data' {
+                    $name = $reader.GetAttribute('Name')
+                    $value = $reader.ReadElementContentAsString()
+                    if (-not [string]::IsNullOrEmpty($name)) {
+                        $eventData[$name] = $value
+                    }
+                }
+            }
+        }
+    } finally {
+        $reader.Dispose()
+        $stringReader.Dispose()
+    }
+
+    $record = [EventRecord]::new()
+    $record.TimeCreated = $timeCreated
+    $record.EventId = $eventId
+    $record.ProviderName = $providerName
+    $record.Computer = $computer
+    $record.RecordId = $recordId
+    $record.EventData = $eventData
+    return $record
+}
+
 $options = [Options]::new()
-$options.LogName = 'Security'
-$options.EventIds = [System.Collections.Generic.List[int]]::new()
-$options.ProgressInterval = 1000
-$options.OutputFolder = 'C:\Logs\Security'
-$options.UseWinApi = $false
 
 for ($i = 0; $i -lt $Args.Length; $i++) {
     $arg = $Args[$i]
@@ -191,8 +452,7 @@ Write-Host $xpathQuery -ForegroundColor Yellow
 
 $encoding = [System.Text.UTF8Encoding]::new($false)
 $writer = [System.IO.StreamWriter]::new($jsonFile, $false, $encoding)
-$jsonOptions = [System.Text.Json.JsonSerializerOptions]::new()
-$jsonOptions.WriteIndented = $false
+$jsonOptions = $null
 
 $processed = 0
 try {
