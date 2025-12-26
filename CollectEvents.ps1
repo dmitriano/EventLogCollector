@@ -403,7 +403,7 @@ $jsonOptions = $null
 $processed = 0
 try {
     $collector = if ($UseWinApi) { [WinapiCollector]::new() } else { [WevtutilCollector]::new() }
-    Write-Host "Creating Collector: $($collector.CollectorName)" -ForegroundColor DarkCyan
+    Write-Host "Collector: $($collector.CollectorName)" -ForegroundColor DarkCyan
 
     $processed = $collector.Collect(
         $xpathQuery,
