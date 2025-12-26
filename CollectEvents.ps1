@@ -1,7 +1,26 @@
 [CmdletBinding()]
 param(
+    [Nullable[int]]$Hours = $null,
+
+    [string]$LogName = 'Security',
+
+    # Optional path to an .evtx file. If set, wevtutil reads from the file (/lf:true).
+    [string]$EvtxPath = $null,
+
+    # Optional Event IDs filter. If $null or empty -> no EventID filter (all IDs).
+    [int[]]$EventIds = $null,
+
+    # How often to print "Processed N events..." (0 = disable)
+    [int]$ProgressInterval = 1000,
+
+    [string]$OutputFolder = "C:\Logs\Security",
+
+    [switch]$UseWinApi,
+
+    [switch]$Help,
+
     [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$Args
+    [string[]]$RemainingArgs
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,19 +31,37 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
         throw 'CollectWevtutilStream.ps1 requires PowerShell 6+ (pwsh). Install PowerShell 6+ or run via pwsh directly.'
     }
 
-    $argumentList = @('-NoProfile', '-File', $MyInvocation.MyCommand.Path) + $Args
+    $argumentList = @('-NoProfile', '-File', $MyInvocation.MyCommand.Path)
+    foreach ($key in $PSBoundParameters.Keys) {
+        if ($key -eq 'RemainingArgs') {
+            continue
+        }
+
+        $value = $PSBoundParameters[$key]
+        if ($value -is [switch]) {
+            if ($value.IsPresent) {
+                $argumentList += "-$key"
+            }
+        } elseif ($null -ne $value) {
+            if ($value -is [array]) {
+                if ($value.Count -gt 0) {
+                    $argumentList += "-$key"
+                    foreach ($item in $value) {
+                        $argumentList += $item
+                    }
+                }
+            } else {
+                $argumentList += "-$key"
+                $argumentList += $value
+            }
+        }
+    }
+
+    if ($PSBoundParameters.ContainsKey('RemainingArgs')) {
+        $argumentList += $PSBoundParameters['RemainingArgs']
+    }
     $process = Start-Process -FilePath $pwsh.Source -ArgumentList $argumentList -NoNewWindow -Wait -PassThru
     exit $process.ExitCode
-}
-
-class Options {
-    [Nullable[int]]$Hours
-    [string]$LogName = 'Security'
-    [string]$EvtxPath
-    [System.Collections.Generic.List[int]]$EventIds = [System.Collections.Generic.List[int]]::new()
-    [int]$ProgressInterval = 1000
-    [string]$OutputFolder = 'C:\Logs\Security'
-    [bool]$UseWinApi
 }
 
 class EventRecord {
@@ -40,7 +77,6 @@ class Collector {
     [string]$CollectorName = 'Base'
 
     [int] Collect(
-        [Options]$options,
         [string]$xpathQuery,
         [System.IO.StreamWriter]$writer,
         $jsonOptions,
@@ -55,7 +91,7 @@ class Collector {
         $processed = 0
         $first = $true
 
-        foreach ($xml in $this.ReadEventXml($options, $xpathQuery, $swRead, $swRegex)) {
+        foreach ($xml in $this.ReadEventXml($xpathQuery, $swRead, $swRegex)) {
             $swParse.Start()
             $record = Parse-EventToObject -EventXml $xml
             $swParse.Stop()
@@ -75,7 +111,7 @@ class Collector {
 
             $writer.Write($json)
 
-            if ($options.ProgressInterval -gt 0 -and ($processed % $options.ProgressInterval) -eq 0) {
+            if ($script:ProgressInterval -gt 0 -and ($processed % $script:ProgressInterval) -eq 0) {
                 Write-Host "Processed $processed events..." -ForegroundColor DarkGray
                 $writer.Flush()
             }
@@ -91,7 +127,6 @@ class Collector {
     }
 
     [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
-        [Options]$options,
         [string]$xpathQuery,
         [System.Diagnostics.Stopwatch]$swRead,
         [System.Diagnostics.Stopwatch]$swRegex) {
@@ -109,7 +144,6 @@ class WevtutilCollector : Collector {
     }
 
     [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
-        [Options]$options,
         [string]$xpathQuery,
         [System.Diagnostics.Stopwatch]$swRead,
         [System.Diagnostics.Stopwatch]$swRegex) {
@@ -121,10 +155,10 @@ class WevtutilCollector : Collector {
         $psi.RedirectStandardError = $true
         $psi.CreateNoWindow = $true
 
-        if (-not [string]::IsNullOrWhiteSpace($options.EvtxPath)) {
-            $psi.Arguments = "qe `"$($options.EvtxPath)`" /lf:true /q:`"$xpathQuery`" /f:XML"
+        if (-not [string]::IsNullOrWhiteSpace($script:EvtxPath)) {
+            $psi.Arguments = "qe `"$($script:EvtxPath)`" /lf:true /q:`"$xpathQuery`" /f:XML"
         } else {
-            $psi.Arguments = "qe $($options.LogName) /q:`"$xpathQuery`" /f:XML"
+            $psi.Arguments = "qe $($script:LogName) /q:`"$xpathQuery`" /f:XML"
         }
 
         $proc = [System.Diagnostics.Process]::new()
@@ -184,13 +218,12 @@ class WinapiCollector : Collector {
     }
 
     [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
-        [Options]$options,
         [string]$xpathQuery,
         [System.Diagnostics.Stopwatch]$swRead,
         [System.Diagnostics.Stopwatch]$swRegex) {
         $results = [System.Collections.Generic.List[string]]::new()
-        $queryPath = if ([string]::IsNullOrWhiteSpace($options.EvtxPath)) { $options.LogName } else { $options.EvtxPath }
-        $pathType = if ([string]::IsNullOrWhiteSpace($options.EvtxPath)) {
+        $queryPath = if ([string]::IsNullOrWhiteSpace($script:EvtxPath)) { $script:LogName } else { $script:EvtxPath }
+        $pathType = if ([string]::IsNullOrWhiteSpace($script:EvtxPath)) {
             [System.Diagnostics.Eventing.Reader.PathType]::LogName
         } else {
             [System.Diagnostics.Eventing.Reader.PathType]::FilePath
@@ -372,16 +405,29 @@ function Parse-EventToObject {
     return $record
 }
 
-$options = [Options]::new()
+$eventIdList = [System.Collections.Generic.List[int]]::new()
+if ($EventIds) {
+    foreach ($id in $EventIds) {
+        if ($null -ne $id) {
+            $eventIdList.Add($id)
+        }
+    }
+}
 
-for ($i = 0; $i -lt $Args.Length; $i++) {
-    $arg = $Args[$i]
+if ($Help) {
+    Show-Help
+    exit 0
+}
+
+$remaining = @($RemainingArgs)
+for ($i = 0; $i -lt $remaining.Length; $i++) {
+    $arg = $remaining[$i]
     switch ($arg) {
-        '--hours' { $options.Hours = Parse-IntValue -Arguments $Args -Index ([ref]$i) }
-        '--logname' { $value = Parse-StringValue -Arguments $Args -Index ([ref]$i); if ($value) { $options.LogName = $value } }
-        '--evtxpath' { $options.EvtxPath = Parse-StringValue -Arguments $Args -Index ([ref]$i) }
+        '--hours' { $script:Hours = Parse-IntValue -Arguments $remaining -Index ([ref]$i) }
+        '--logname' { $value = Parse-StringValue -Arguments $remaining -Index ([ref]$i); if ($value) { $script:LogName = $value } }
+        '--evtxpath' { $script:EvtxPath = Parse-StringValue -Arguments $remaining -Index ([ref]$i) }
         '--eventids' {
-            $value = Parse-StringValue -Arguments $Args -Index ([ref]$i)
+            $value = Parse-StringValue -Arguments $remaining -Index ([ref]$i)
             if ($value) {
                 $list = [System.Collections.Generic.List[int]]::new()
                 foreach ($part in $value.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries)) {
@@ -392,12 +438,12 @@ for ($i = 0; $i -lt $Args.Length; $i++) {
                     }
                 }
 
-                $options.EventIds = $list
+                $eventIdList = $list
             }
         }
-        '--progressinterval' { $value = Parse-IntValue -Arguments $Args -Index ([ref]$i); if ($null -ne $value) { $options.ProgressInterval = $value } }
-        '--outputfolder' { $value = Parse-StringValue -Arguments $Args -Index ([ref]$i); if ($value) { $options.OutputFolder = $value } }
-        '--usewinapi' { $options.UseWinApi = $true }
+        '--progressinterval' { $value = Parse-IntValue -Arguments $remaining -Index ([ref]$i); if ($null -ne $value) { $script:ProgressInterval = $value } }
+        '--outputfolder' { $value = Parse-StringValue -Arguments $remaining -Index ([ref]$i); if ($value) { $script:OutputFolder = $value } }
+        '--usewinapi' { $script:UseWinApi = $true }
         '--help' { Show-Help; exit 0 }
         '-h' { Show-Help; exit 0 }
         '/?' { Show-Help; exit 0 }
@@ -413,33 +459,33 @@ $swParse = [System.Diagnostics.Stopwatch]::new()
 $swConvert = [System.Diagnostics.Stopwatch]::new()
 $swWrite = [System.Diagnostics.Stopwatch]::new()
 
-if (-not (Test-Path $options.OutputFolder)) {
-    New-Item -ItemType Directory -Path $options.OutputFolder | Out-Null
+if (-not (Test-Path $OutputFolder)) {
+    New-Item -ItemType Directory -Path $OutputFolder | Out-Null
 }
 
 $startTimeUtc = $null
-if ($null -ne $options.Hours) {
-    $startTimeUtc = [DateTime]::UtcNow.AddHours(-$options.Hours).ToString('o')
+if ($null -ne $Hours) {
+    $startTimeUtc = [DateTime]::UtcNow.AddHours(-$Hours).ToString('o')
 }
 
 $useEvtxFile = $false
-$sourceLabel = $options.LogName
-if (-not [string]::IsNullOrWhiteSpace($options.EvtxPath)) {
-    if (-not (Test-Path $options.EvtxPath)) {
-        throw "EVTX file not found: $($options.EvtxPath)"
+$sourceLabel = $LogName
+if (-not [string]::IsNullOrWhiteSpace($EvtxPath)) {
+    if (-not (Test-Path $EvtxPath)) {
+        throw "EVTX file not found: $($EvtxPath)"
     }
 
     $useEvtxFile = $true
-    $sourceLabel = [System.IO.Path]::GetFileName($options.EvtxPath)
+    $sourceLabel = [System.IO.Path]::GetFileName($EvtxPath)
 }
 
 $timestamp = [DateTime]::Now.ToString('yyyyMMdd_HHmmss')
 $outKind = if ($useEvtxFile) { 'evtx' } else { 'live' }
-$hoursLabel = if ($null -ne $options.Hours) { $options.Hours.ToString() } else { '' }
-$jsonFile = Join-Path $options.OutputFolder "${timestamp}_${sourceLabel}_${outKind}_last${hoursLabel}h.json"
+$hoursLabel = if ($null -ne $Hours) { $Hours.ToString() } else { '' }
+$jsonFile = Join-Path $OutputFolder "${timestamp}_${sourceLabel}_${outKind}_last${hoursLabel}h.json"
 
-$sourceText = if ($useEvtxFile) { "EVTX file: $($options.EvtxPath)" } else { "Live log: $($options.LogName)" }
-$eventIdsText = if ($options.EventIds.Count -gt 0) { $options.EventIds -join ', ' } else { '<none> (all Event IDs)' }
+$sourceText = if ($useEvtxFile) { "EVTX file: $($EvtxPath)" } else { "Live log: $($LogName)" }
+$eventIdsText = if ($eventIdList.Count -gt 0) { $eventIdList -join ', ' } else { '<none> (all Event IDs)' }
 
 Write-Host "Source: $sourceText" -ForegroundColor Cyan
 if ($startTimeUtc) {
@@ -451,7 +497,7 @@ if ($startTimeUtc) {
 Write-Host "EventIds filter: $eventIdsText" -ForegroundColor Cyan
 Write-Host "Output file: $jsonFile" -ForegroundColor Cyan
 
-$xpathQuery = Build-XPathQuery -EventIds $options.EventIds -StartTimeUtc $startTimeUtc
+$xpathQuery = Build-XPathQuery -EventIds $eventIdList -StartTimeUtc $startTimeUtc
 Write-Host "XPath:" -ForegroundColor Yellow
 Write-Host $xpathQuery -ForegroundColor Yellow
 
@@ -461,11 +507,10 @@ $jsonOptions = $null
 
 $processed = 0
 try {
-    $collector = if ($options.UseWinApi) { [WinapiCollector]::new() } else { [WevtutilCollector]::new() }
+    $collector = if ($UseWinApi) { [WinapiCollector]::new() } else { [WevtutilCollector]::new() }
     Write-Host "Creating Collector: $($collector.CollectorName)" -ForegroundColor DarkCyan
 
     $processed = $collector.Collect(
-        $options,
         $xpathQuery,
         $writer,
         $jsonOptions,
