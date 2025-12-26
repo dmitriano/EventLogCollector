@@ -98,6 +98,7 @@ class Collector {
         [System.Diagnostics.Stopwatch]$swRead,
         [System.Diagnostics.Stopwatch]$swRegex) {
         throw 'ReadEventXml must be implemented by derived classes.'
+        return @()
     }
 }
 
@@ -114,6 +115,7 @@ class WevtutilCollector : Collector {
         [string]$xpathQuery,
         [System.Diagnostics.Stopwatch]$swRead,
         [System.Diagnostics.Stopwatch]$swRegex) {
+        $results = [System.Collections.Generic.List[string]]::new()
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $psi.FileName = 'wevtutil.exe'
         $psi.UseShellExecute = $false
@@ -163,7 +165,7 @@ class WevtutilCollector : Collector {
 
                 if ($matchesEnd) {
                     $inEvent = $false
-                    Write-Output $buffer.ToString()
+                    $results.Add($buffer.ToString()) | Out-Null
                 }
             }
         }
@@ -173,6 +175,8 @@ class WevtutilCollector : Collector {
         if ($proc.ExitCode -ne 0) {
             throw "wevtutil exit code $($proc.ExitCode). stderr: $stderr"
         }
+
+        return $results
     }
 }
 
@@ -186,6 +190,7 @@ class WinapiCollector : Collector {
         [string]$xpathQuery,
         [System.Diagnostics.Stopwatch]$swRead,
         [System.Diagnostics.Stopwatch]$swRegex) {
+        $results = [System.Collections.Generic.List[string]]::new()
         $queryPath = if ([string]::IsNullOrWhiteSpace($options.EvtxPath)) { $options.LogName } else { $options.EvtxPath }
         $pathType = if ([string]::IsNullOrWhiteSpace($options.EvtxPath)) {
             [System.Diagnostics.Eventing.Reader.PathType]::LogName
@@ -208,7 +213,7 @@ class WinapiCollector : Collector {
                     $swRead.Start()
                     $xml = $evt.ToXml()
                     $swRead.Stop()
-                    Write-Output $xml
+                    $results.Add($xml) | Out-Null
                 } finally {
                     $evt.Dispose()
                 }
@@ -216,6 +221,8 @@ class WinapiCollector : Collector {
         } finally {
             $reader.Dispose()
         }
+
+        return $results
     }
 }
 
