@@ -1,4 +1,5 @@
 [CmdletBinding()]
+
 param(
     [Nullable[int]]$Hours = $null,
 
@@ -216,7 +217,7 @@ class WinapiCollector : Collector {
 }
 
 function Show-Help {
-    Write-Host "Usage: CollectWevtutilStream.ps1 [options]"
+    Write-Host "Usage: CollectEvents.ps1 [options]"
     Write-Host ""
     Write-Host "Options:"
     Write-Host "  --hours <int>            Look back N hours (UTC). Omit for all events."
@@ -344,7 +345,7 @@ if ($Help) {
     exit 0
 }
 
-Write-Host "=== CollectWevtutilStream v2.5 (EVTX supported, optional EventIds, ConvertTo-Json -Compress) ===" -ForegroundColor Magenta
+Write-Host "=== CollectEvents.ps1 ===" -ForegroundColor Magenta
 
 $swTotal = [System.Diagnostics.Stopwatch]::StartNew()
 $swRead = [System.Diagnostics.Stopwatch]::new()
