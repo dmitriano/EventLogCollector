@@ -180,7 +180,7 @@ class WevtutilCollector : Collector {
 
 class WinapiCollector : Collector {
     WinapiCollector() {
-        $this.CollectorName = 'WinAPI (EventLogReader)'
+        $this.CollectorName = 'WinAPI'
     }
 
     [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
@@ -462,7 +462,7 @@ $jsonOptions = $null
 $processed = 0
 try {
     $collector = if ($options.UseWinApi) { [WinapiCollector]::new() } else { [WevtutilCollector]::new() }
-    Write-Host "Collector: $($collector.CollectorName)" -ForegroundColor DarkCyan
+    Write-Host "Creating Collector: $($collector.CollectorName)" -ForegroundColor DarkCyan
 
     $processed = $collector.Collect(
         $options,
