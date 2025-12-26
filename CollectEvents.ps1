@@ -1,5 +1,3 @@
-[CmdletBinding()]
-
 param(
     [Nullable[int]]$Hours = $null,
 
