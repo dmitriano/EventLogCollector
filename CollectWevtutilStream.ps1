@@ -7,7 +7,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($PSVersionTable.PSEdition -eq 'Desktop') {
-    throw 'CollectWevtutilStream.ps1 requires PowerShell 7+ (pwsh). Windows PowerShell cannot load .NET 9 assemblies.'
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if (-not $pwsh) {
+        throw 'CollectWevtutilStream.ps1 requires PowerShell 7+ (pwsh). Install PowerShell 7 or run via dotnet directly.'
+    }
+
+    $argumentList = @('-NoProfile', '-File', $MyInvocation.MyCommand.Path) + $Args
+    $process = Start-Process -FilePath $pwsh.Source -ArgumentList $argumentList -NoNewWindow -Wait -PassThru
+    exit $process.ExitCode
 }
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
