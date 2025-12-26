@@ -6,6 +6,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    throw 'CollectWevtutilStream.ps1 requires PowerShell 7+ (pwsh). Windows PowerShell cannot load .NET 9 assemblies.'
+}
+
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectPath = Join-Path $scriptRoot 'EventLogCollector/EventLogCollector.csproj'
 $configuration = 'Release'
@@ -20,7 +24,7 @@ if (-not (Test-Path $dllPath)) {
     }
 }
 
-Add-Type -Path $dllPath
+[System.Runtime.Loader.AssemblyLoadContext]::Default.LoadFromAssemblyPath($dllPath) | Out-Null
 
 function Show-Help {
     Write-Host "Usage: CollectWevtutilStream.ps1 [options]"
