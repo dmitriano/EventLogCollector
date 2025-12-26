@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 
-sealed class WevtutilCollector : Collector
+public sealed class WevtutilCollector : Collector
 {
     private static readonly Regex EventBeginRegex = new("<Event(\\s|>)", RegexOptions.Compiled);
     private static readonly Regex EventEndRegex = new("</Event>", RegexOptions.Compiled);

@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml;
 
-sealed class Options
+public sealed class Options
 {
     public int? Hours { get; set; }
     public string LogName { get; set; } = "Security";
@@ -14,7 +14,7 @@ sealed class Options
     public bool UseWinApi { get; set; }
 }
 
-sealed class EventRecord
+public sealed class EventRecord
 {
     public string? TimeCreated { get; init; }
     public int? EventId { get; init; }

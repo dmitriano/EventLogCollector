@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-sealed class WinapiCollector : Collector
+public sealed class WinapiCollector : Collector
 {
     private const int EvtQueryChannelPath = 0x1;
     private const int EvtQueryFilePath = 0x2;
