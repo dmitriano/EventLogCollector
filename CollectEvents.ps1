@@ -37,11 +37,7 @@ class EventRecord {
 }
 
 class Collector {
-    [string] CollectorName {
-        get {
-            return 'Base'
-        }
-    }
+    [string]$CollectorName = 'Base'
 
     [int] Collect(
         [Options]$options,
@@ -108,10 +104,8 @@ class WevtutilCollector : Collector {
     hidden static [System.Text.RegularExpressions.Regex]$EventBeginRegex = [System.Text.RegularExpressions.Regex]::new('<Event(\s|>)', [System.Text.RegularExpressions.RegexOptions]::Compiled)
     hidden static [System.Text.RegularExpressions.Regex]$EventEndRegex = [System.Text.RegularExpressions.Regex]::new('</Event>', [System.Text.RegularExpressions.RegexOptions]::Compiled)
 
-    [string] CollectorName {
-        get {
-            return 'wevtutil.exe'
-        }
+    WevtutilCollector() {
+        $this.CollectorName = 'wevtutil.exe'
     }
 
     [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
@@ -185,10 +179,8 @@ class WevtutilCollector : Collector {
 }
 
 class WinapiCollector : Collector {
-    [string] CollectorName {
-        get {
-            return 'WinAPI (EventLogReader)'
-        }
+    WinapiCollector() {
+        $this.CollectorName = 'WinAPI (EventLogReader)'
     }
 
     [System.Collections.Generic.IEnumerable[string]] ReadEventXml(
