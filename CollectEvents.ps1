@@ -17,52 +17,10 @@ param(
 
     [switch]$UseWinApi,
 
-    [switch]$Help,
-
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$RemainingArgs
+    [switch]$Help
 )
 
 $ErrorActionPreference = 'Stop'
-
-if ($PSVersionTable.PSEdition -eq 'Desktop') {
-    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
-    if (-not $pwsh) {
-        throw 'CollectWevtutilStream.ps1 requires PowerShell 6+ (pwsh). Install PowerShell 6+ or run via pwsh directly.'
-    }
-
-    $argumentList = @('-NoProfile', '-File', $MyInvocation.MyCommand.Path)
-    foreach ($key in $PSBoundParameters.Keys) {
-        if ($key -eq 'RemainingArgs') {
-            continue
-        }
-
-        $value = $PSBoundParameters[$key]
-        if ($value -is [switch]) {
-            if ($value.IsPresent) {
-                $argumentList += "-$key"
-            }
-        } elseif ($null -ne $value) {
-            if ($value -is [array]) {
-                if ($value.Count -gt 0) {
-                    $argumentList += "-$key"
-                    foreach ($item in $value) {
-                        $argumentList += $item
-                    }
-                }
-            } else {
-                $argumentList += "-$key"
-                $argumentList += $value
-            }
-        }
-    }
-
-    if ($PSBoundParameters.ContainsKey('RemainingArgs')) {
-        $argumentList += $PSBoundParameters['RemainingArgs']
-    }
-    $process = Start-Process -FilePath $pwsh.Source -ArgumentList $argumentList -NoNewWindow -Wait -PassThru
-    exit $process.ExitCode
-}
 
 class EventRecord {
     [string]$TimeCreated
@@ -270,39 +228,6 @@ function Show-Help {
     Write-Host "  --usewinapi              Use WinAPI (EvtQuery/EvtNext/EvtRender) instead of wevtutil."
 }
 
-function Parse-IntValue {
-    param(
-        [string[]]$Arguments,
-        [ref]$Index
-    )
-
-    if ($Index.Value + 1 -ge $Arguments.Length) {
-        return $null
-    }
-
-    $Index.Value++
-    $value = 0
-    if ([int]::TryParse($Arguments[$Index.Value], [ref]$value)) {
-        return $value
-    }
-
-    return $null
-}
-
-function Parse-StringValue {
-    param(
-        [string[]]$Arguments,
-        [ref]$Index
-    )
-
-    if ($Index.Value + 1 -ge $Arguments.Length) {
-        return $null
-    }
-
-    $Index.Value++
-    return $Arguments[$Index.Value]
-}
-
 function Build-XPathQuery {
     param(
         [System.Collections.Generic.List[int]]$EventIds,
@@ -417,37 +342,6 @@ if ($EventIds) {
 if ($Help) {
     Show-Help
     exit 0
-}
-
-$remaining = @($RemainingArgs)
-for ($i = 0; $i -lt $remaining.Length; $i++) {
-    $arg = $remaining[$i]
-    switch ($arg) {
-        '--hours' { $script:Hours = Parse-IntValue -Arguments $remaining -Index ([ref]$i) }
-        '--logname' { $value = Parse-StringValue -Arguments $remaining -Index ([ref]$i); if ($value) { $script:LogName = $value } }
-        '--evtxpath' { $script:EvtxPath = Parse-StringValue -Arguments $remaining -Index ([ref]$i) }
-        '--eventids' {
-            $value = Parse-StringValue -Arguments $remaining -Index ([ref]$i)
-            if ($value) {
-                $list = [System.Collections.Generic.List[int]]::new()
-                foreach ($part in $value.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries)) {
-                    $trimmed = $part.Trim()
-                    $id = 0
-                    if ([int]::TryParse($trimmed, [ref]$id)) {
-                        $list.Add($id)
-                    }
-                }
-
-                $eventIdList = $list
-            }
-        }
-        '--progressinterval' { $value = Parse-IntValue -Arguments $remaining -Index ([ref]$i); if ($null -ne $value) { $script:ProgressInterval = $value } }
-        '--outputfolder' { $value = Parse-StringValue -Arguments $remaining -Index ([ref]$i); if ($value) { $script:OutputFolder = $value } }
-        '--usewinapi' { $script:UseWinApi = $true }
-        '--help' { Show-Help; exit 0 }
-        '-h' { Show-Help; exit 0 }
-        '/?' { Show-Help; exit 0 }
-    }
 }
 
 Write-Host "=== CollectWevtutilStream v2.5 (EVTX supported, optional EventIds, ConvertTo-Json -Compress) ===" -ForegroundColor Magenta
